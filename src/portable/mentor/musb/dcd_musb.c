@@ -221,8 +221,7 @@ static void process_setup_packet(uint8_t rhport) {
 }
 
 // write to txfifo using pipe_state_t info
-static void pipe_write(musb_regs_t* musb_regs, uint8_t epnum) {
-  pipe_state_t* pipe = pipe_get(epnum, TUSB_DIR_IN);
+static void pipe_write(musb_regs_t* musb_regs, pipe_state_t* pipe, uint8_t epnum) {
   musb_ep_csr_t* ep_csr = get_ep_csr(musb_regs, epnum);
   const unsigned mps = ep_csr->tx_maxp;
   const unsigned rem = pipe->remaining;
@@ -257,7 +256,7 @@ static void process_epin(uint8_t rhport, musb_regs_t *musb_regs, uint8_t epnum) 
     dcd_event_xfer_complete(rhport, tu_edpt_addr(epnum, TUSB_DIR_IN), xferred_len, XFER_RESULT_SUCCESS, true);
     return;
   }
-  pipe_write(musb_regs, epnum);
+  pipe_write(musb_regs, pipe, epnum);
 }
 
 static void process_epout(uint8_t rhport, musb_regs_t *musb_regs, uint8_t epnum) {
@@ -309,35 +308,34 @@ static void process_epout(uint8_t rhport, musb_regs_t *musb_regs, uint8_t epnum)
   }
 }
 
-static bool edpt_n_xfer(uint8_t rhport, uint8_t ep_addr, void *buffer, uint16_t total_bytes, bool use_fifo)
-{
-  unsigned epnum = tu_edpt_number(ep_addr);
-  unsigned dir_in       = tu_edpt_dir(ep_addr);
+static bool edpt_n_xfer(uint8_t rhport, uint8_t ep_addr, void *buffer, uint16_t total_bytes, bool use_fifo) {
+  const uint8_t epnum  = tu_edpt_number(ep_addr);
+  const unsigned dir_in = tu_edpt_dir(ep_addr);
 
   pipe_state_t *pipe = pipe_get(epnum, dir_in);
   if (use_fifo) {
-    pipe->fifo = (tu_fifo_t *) buffer;
+    pipe->fifo = (tu_fifo_t *)buffer;
   } else {
-    pipe->buf = (uint8_t *) buffer;
+    pipe->buf = (uint8_t *)buffer;
   }
-  pipe->length       = total_bytes;
-  pipe->remaining    = total_bytes;
-  pipe->use_fifo     = use_fifo;
-  pipe->armed        = true;
+  pipe->length    = total_bytes;
+  pipe->remaining = total_bytes;
+  pipe->use_fifo  = use_fifo;
+  pipe->armed     = true;
+
+  musb_regs_t   *musb_regs = MUSB_REGS(rhport);
+  musb_ep_csr_t *ep_csr    = get_ep_csr(musb_regs, epnum);
 
   if (dir_in) {
-    pipe_write(MUSB_REGS(rhport), (uint8_t) epnum);
+    pipe_write(musb_regs, pipe, epnum);
   } else {
-    musb_regs_t* musb_regs = MUSB_REGS(rhport);
-    musb_ep_csr_t* ep_csr = get_ep_csr(musb_regs, epnum);
-
     // Re-enable Rx interrupt (may have been masked by the no-buffer path in process_epout)
-    musb_regs->intr_rxen |= (uint16_t) TU_BIT(epnum);
+    musb_regs->intr_rxen |= (uint16_t)TU_BIT(epnum);
 
     // Drain any packet staged in the Rx FIFO from a prior no-buffer interrupt.
     // process_epout() fires dcd_event_xfer_complete() itself if the drain completes.
     if (ep_csr->rx_csrl & MUSB_RXCSRL1_RXRDY) {
-      process_epout(rhport, musb_regs, (uint8_t) epnum);
+      process_epout(rhport, musb_regs, epnum);
     }
   }
   return true;
@@ -622,19 +620,15 @@ void dcd_sof_enable(uint8_t rhport, bool en)
 //--------------------------------------------------------------------+
 // Endpoint API
 //--------------------------------------------------------------------+
-// static void edpt_setup(musb_regs_t* musb, uint8_t ep_addr, uint8_t ep_type, uint16_t ep_size){
-//   const unsigned epn     = tu_edpt_number(ep_addr);
-//   const unsigned dir_in  = tu_edpt_dir(ep_addr);
-// }
 
 // Configure endpoint's registers according to descriptor
 bool dcd_edpt_open(uint8_t rhport, tusb_desc_endpoint_t const * ep_desc) {
   const unsigned ep_addr = ep_desc->bEndpointAddress;
   const unsigned epn     = tu_edpt_number(ep_addr);
-  const unsigned dir_in  = tu_edpt_dir(ep_addr);
+  const unsigned epdir  = tu_edpt_dir(ep_addr);
   const unsigned mps     = tu_edpt_packet_size(ep_desc);
 
-  pipe_state_t *pipe = pipe_get(epn, dir_in);
+  pipe_state_t *pipe = pipe_get(epn, epdir);
   pipe->buf       = NULL;
   pipe->length    = 0;
   pipe->remaining = 0;
@@ -642,13 +636,13 @@ bool dcd_edpt_open(uint8_t rhport, tusb_desc_endpoint_t const * ep_desc) {
 
   musb_regs_t* musb = MUSB_REGS(rhport);
   musb_ep_csr_t* ep_csr = get_ep_csr(musb, epn);
-  const uint8_t is_rx = 1 - dir_in;
+  const uint8_t is_rx = (1 - epdir);
   musb_ep_maxp_csr_t* maxp_csr = &ep_csr->maxp_csr[is_rx];
 
   maxp_csr->maxp = mps;
   maxp_csr->csrh = 0;
 #if MUSB_CFG_SHARED_FIFO
-  if (dir_in) {
+  if (epdir) {
     maxp_csr->csrh |= MUSB_CSRH_TX_MODE;
   }
 #endif
