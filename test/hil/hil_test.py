@@ -1064,7 +1064,9 @@ def test_device_net_lwip_webserver(board):
     iperf_port = 5001
 
     # Wait for the host to get an IPv4 address in the device's subnet (DHCP served by the device).
-    deadline = time.time() + ENUM_TIMEOUT
+    # USB enum + DHCP serve can take longer on the CI HIL hardware than on local — give it 30s.
+    iface_timeout = 30
+    deadline = time.time() + iface_timeout
     host_ip = None
     while time.time() < deadline:
         ret = subprocess.run(['ip', '-o', '-4', 'addr', 'show', iface],
@@ -1074,7 +1076,7 @@ def test_device_net_lwip_webserver(board):
             host_ip = m.group(1)
             break
         time.sleep(0.5)
-    assert host_ip, f'USB net iface {iface} did not come up with 192.168.7.x within {ENUM_TIMEOUT}s'
+    assert host_ip, f'USB net iface {iface} did not come up with 192.168.7.x within {iface_timeout}s'
 
     # Poll the iperf TCP port until the device is accepting. The net stack comes up a bit
     # after DHCP completes; iperf server binding isn't instantaneous after reflash.
