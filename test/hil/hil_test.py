@@ -58,6 +58,7 @@ STATUS_SKIPPED = "\033[33mSkipped\033[0m"
 
 verbose = False
 test_only = []
+board_test = {}
 build_dir = 'cmake-build'
 skip_flash = False
 
@@ -1346,7 +1347,9 @@ def test_board(board):
     # default to all tests
     test_list = []
 
-    if len(test_only) > 0:
+    if name in board_test:
+        test_list = board_test[name]
+    elif len(test_only) > 0:
         test_list = test_only
     else:
         if 'tests' in board:
@@ -1366,19 +1369,23 @@ def test_board(board):
                         print(f'{name:25} {skip:30} ... Skip')
 
     err_count = 0
+    failed_tests = []
     flags_on_list = [""]
     if 'build' in board and 'flags_on' in board['build']:
         flags_on_list = board['build']['flags_on']
 
     for f1 in flags_on_list:
         for test in test_list:
-            err_count += test_example(board, f1, test)
+            ec = test_example(board, f1, test)
+            err_count += ec
+            if ec > 0:
+                failed_tests.append(test)
 
     # flash board_test last to disable board's usb (skipped when --skip-flash is set)
     if not skip_flash:
         test_example(board, flags_on_list[0], 'device/board_test')
 
-    return name, err_count
+    return name, err_count, sorted(set(failed_tests))
 
 
 def main():
@@ -1387,6 +1394,7 @@ def main():
     """
     global verbose
     global test_only
+    global board_test
     global build_dir
     global max_retry
     global skip_flash
@@ -1399,6 +1407,8 @@ def main():
     parser.add_argument('-s', '--skip-board', action='append', default=[], help='Skip boards from test')
     parser.add_argument('-sf', '--skip-flash', action='store_true', help='Run tests without flashing firmware (use whatever is already on the board)')
     parser.add_argument('-t', '--test-only', action='append', default=[], help='Tests to run, all if not specified')
+    parser.add_argument('-bt', '--board-test', action='append', default=[],
+                        help='Per-board test list as BOARD:test1,test2 (overrides -t for that board); repeat for multiple boards')
     parser.add_argument('-B', '--build-dir', default='cmake-build', help='Build folder name (default: cmake-build)')
     parser.add_argument('--build', action='store_true', help='Build firmware for selected boards with cmake before running tests')
     parser.add_argument('-r', '--retry', type=int, default=3, help='Retry count for failed tests (default: 3)')
@@ -1410,6 +1420,11 @@ def main():
     skip_boards = args.skip_board
     verbose = args.verbose
     test_only = args.test_only
+    for entry in args.board_test:
+        bname, _, tnames = entry.partition(':')
+        if not bname or not tnames:
+            parser.error(f'invalid --board-test value: {entry!r} (expected BOARD:test1,test2)')
+        board_test[bname] = [t for t in tnames.split(',') if t]
     build_dir = args.build_dir
     max_retry = args.retry
     skip_flash = args.skip_flash
@@ -1443,12 +1458,15 @@ def main():
     with Pool(processes=os.cpu_count()) as pool:
         mret = pool.map(test_board, config_boards)
         err_count = build_err + sum(e[1] for e in mret)
-        # generate skip list for next re-run if failed
+        # generate skip list for next re-run if failed: skip boards that fully passed,
+        # and emit -bt BOARD:t1,t2 so each failed board only re-runs its own failed tests.
         skip_fname = f'{config_file}.skip'
         if err_count > 0:
-            skip_boards += [name for name, err in mret if err == 0]
+            skip_boards += [name for name, err, _ in mret if err == 0]
+            parts = [f'--skip-board {i}' for i in skip_boards]
+            parts += [f'-bt {name}:{",".join(fts)}' for name, err, fts in mret if err > 0 and fts]
             with open(skip_fname, 'w') as f:
-                f.write(' '.join(f'--skip-board {i}' for i in skip_boards))
+                f.write(' '.join(parts))
         elif os.path.exists(skip_fname):
             os.remove(skip_fname)
 

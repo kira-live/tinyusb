@@ -184,11 +184,6 @@
                 "device": false, "host": true, "dual": false,
                 "dev_attached": [
                     {
-                        "vid_pid": "1a86_55d4",
-                        "serial": "52D2002694",
-                        "is_cdc": true
-                    },
-                    {
                         "vid_pid": "0951_1603",
                         "serial": "820000000000000045B46338",
                         "is_msc": true,
