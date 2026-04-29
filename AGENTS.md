@@ -134,27 +134,22 @@ cd docs && sphinx-build -b html . _build        # ~2.5 s
 
 ## Code Size Metrics
 
-Verify size impact before committing.
+Verify size impact before committing. Invoke the `code-size` skill (`.claude/skills/code-size/SKILL.md`) — it wraps `tools/metrics_compare_base.py` to handle the base-vs-branch worktree + build + compare flow.
 
-**Single-board (iterative, ~30 s):**
+Quick reference:
 ```bash
-rm -rf cmake-build
-python3 tools/build.py -b raspberry_pi_pico --target all --target tinyusb_metrics
-python3 tools/metrics.py combine -j -m -f tinyusb/src cmake-build/cmake-build-*/metrics.json
+# Single example, one board:
+python3 tools/metrics_compare_base.py -b raspberry_pi_pico -e device/cdc_msc
+# Add --bloaty for section/symbol breakdown.
+
+# All examples, one board:
+python3 tools/metrics_compare_base.py -b raspberry_pi_pico
+
+# All arm-gcc CI families combined (pre-merge sweep, 4-8 min):
+python3 tools/metrics_compare_base.py --ci
 ```
 
-**Compare vs master:** run the above on master, `mv metrics.json metrics_master.json`, switch branch, rebuild, then:
-```bash
-python3 tools/metrics.py compare -m -f tinyusb/src metrics_master.json metrics.json
-```
-
-**Full CI (all arm-gcc families, 2-4 min):**
-```bash
-rm -rf cmake-build
-FAMILIES=$(python3 .github/workflows/ci_set_matrix.py | python3 -c "import sys,json;d=json.load(sys.stdin);print(' '.join(d.get('arm-gcc',[])))")
-python3 tools/build.py --one-first --target all --target tinyusb_metrics $FAMILIES
-python3 tools/metrics.py combine -j -m -f tinyusb/src cmake-build/cmake-build-*/metrics.json
-```
+Reports land in `cmake-metrics/<board>/metrics_compare.md` (per-board) and `cmake-metrics/_combined/metrics_compare.md` (with `--combined`/`--ci`).
 
 ## Static Analysis (PVS-Studio)
 
